@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#07111f">
+<title>DHRUVA ONLINE AND STUDIO | Portal</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/portal.css">
+</head>
+<body class="portal-page">
+<header class="site-header">
+  <div class="container nav-wrap">
+    <a class="brand" href="index.html"><span class="brand-mark">D</span><span class="brand-text">DHRUVA ONLINE AND STUDIO</span></a>
+    <nav class="nav portal-nav">
+      <a href="index.html">Website</a>
+      <a href="#services">Services</a>
+      <a href="#applications">Applications</a>
+      <button id="logoutBtn" class="nav-cta">Logout</button>
+    </nav>
+  </div>
+</header>
+<main class="portal-main container">
+  <section class="portal-hero">
+    <div><span class="eyebrow">SECURE USER PORTAL</span><h1 id="welcome">Welcome</h1><p>Manage your services, applications, documents and notifications from one place.</p></div>
+    <a class="btn btn-primary" href="#services">Browse Services <span>→</span></a>
+  </section>
+
+  <section class="portal-stats">
+    <div><span>Applications</span><strong id="statApps">0</strong></div>
+    <div><span>Processing</span><strong id="statProcessing">0</strong></div>
+    <div><span>Completed</span><strong id="statCompleted">0</strong></div>
+    <div><span>Notifications</span><strong id="statNotifications">0</strong></div>
+  </section>
+
+  <section id="services" class="portal-section">
+    <div class="section-heading"><div><span class="eyebrow">SERVICES</span><h2>Available <span>services.</span></h2></div></div>
+    <div id="portalServices" class="services-grid"></div>
+  </section>
+
+  <section class="portal-section support-strip"><div><span class="eyebrow">SUPPORT</span><h2>Need help? <span>Chat on WhatsApp.</span></h2><p>Ask about a service or your application.</p></div><a id="portalWhatsApp" class="btn btn-primary" target="_blank" rel="noopener">Contact on WhatsApp <span>↗</span></a></section><section id="applications" class="portal-section">
+    <div class="section-heading"><div><span class="eyebrow">MY APPLICATIONS</span><h2>Application <span>history.</span></h2></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Reference ID</th><th>Service</th><th>Status</th><th>Submitted</th><th>Updated</th></tr></thead><tbody id="applicationsBody"></tbody></table></div>
+  </section>
+
+  <section class="portal-section two-col">
+    <div class="portal-card"><span class="eyebrow">PROFILE</span><h2>Your <span>profile.</span></h2><div id="profileBox"></div></div>
+    <div class="portal-card"><span class="eyebrow">NOTIFICATIONS</span><h2>Latest <span>updates.</span></h2><div id="notificationsBox"></div></div>
+  </section>
+</main>
+
+<div class="modal" id="bookingModal" aria-hidden="true">
+ <div class="modal-backdrop" data-close></div>
+ <article class="modal-card booking-card">
+  <button class="modal-close" data-close>×</button>
+  <span class="eyebrow">SERVICE REQUEST</span>
+  <h2 id="bookingTitle">Apply</h2>
+  <p id="bookingDescription"></p>
+  <form id="bookingForm">
+    <input type="hidden" id="bookingServiceId">
+    <label>Full name<input id="fullName" required></label>
+    <label>Mobile number<input id="mobile" type="tel" required></label>
+    <label>Required information<textarea id="details" rows="4" required placeholder="Enter the information needed for this service"></textarea></label>
+    <label>Documents
+      <input id="documents" type="file" multiple accept=".pdf,.jpg,.jpeg,.png">
+      <small>PDF/JPG/JPEG/PNG only. Maximum 5 files, 5 MB each.</small>
+    </label>
+    <div class="payment-ready"><strong>Payment</strong><span>Gateway not connected yet.</span><small>Fees can be displayed, but no payment is collected until a real gateway is configured.</small></div>
+    <button class="btn btn-primary" type="submit">Submit Application <span>→</span></button>
+    <p id="bookingMessage" class="form-note"></p>
+  </form>
+ </article>
+</div>
+<script src="js/config.js"></script>
+<script src="js/portal.js"></script>
+</body>
+</html>

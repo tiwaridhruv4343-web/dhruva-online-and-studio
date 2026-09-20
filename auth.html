@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#07111f"><title>DHRUVA ONLINE AND STUDIO | Account</title>
+<link rel="stylesheet" href="css/style.css"><link rel="stylesheet" href="css/portal.css">
+</head>
+<body class="auth-page">
+<div class="auth-wrap">
+  <a class="brand auth-brand" href="index.html"><span class="brand-mark">D</span><span class="brand-text">DHRUVA ONLINE AND STUDIO</span></a>
+  <div class="auth-card">
+    <span class="eyebrow" id="authEyebrow">SECURE ACCOUNT</span>
+    <h1 id="authTitle">Sign in</h1>
+    <p id="authSubtitle">Access your DHRUVA ONLINE AND STUDIO dashboard.</p>
+    <form id="authForm">
+      <div id="nameField" class="hidden-field"><label>Full name<input id="name" autocomplete="name"></label></div>
+      <label>Email<input id="email" type="email" autocomplete="email" required></label>
+      <label id="mobileLabel">Mobile number<input id="mobile" type="tel" autocomplete="tel"></label>
+      <label>Password<input id="password" type="password" autocomplete="current-password" minlength="8" required></label>
+      <div id="confirmField" class="hidden-field"><label>Confirm password<input id="confirm" type="password" autocomplete="new-password"></label></div>
+      <button class="btn btn-primary" type="submit" id="authSubmit">Sign in <span>→</span></button>
+      <p id="authMessage" class="form-note"></p>
+    </form>
+    <div class="auth-links"><button id="toggleMode">Create an account</button><button id="forgotBtn">Forgot password?</button></div>
+  </div>
+  <p class="backend-note">Authentication is handled by the server. Passwords are hashed and are never stored as plain text.</p>
+</div>
+<script src="js/auth.js"></script>
+</body>
+</html>

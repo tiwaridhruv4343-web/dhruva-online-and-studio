@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#07111f"><title>DHRUVA ONLINE AND STUDIO | Admin</title>
+<link rel="stylesheet" href="css/style.css"><link rel="stylesheet" href="css/portal.css">
+</head>
+<body class="portal-page">
+<header class="site-header"><div class="container nav-wrap"><a class="brand" href="index.html"><span class="brand-mark">D</span><span class="brand-text">DHRUVA ONLINE AND STUDIO</span></a><nav class="nav"><a href="index.html">Website</a><button id="adminLogout" class="nav-cta">Logout</button></nav></div></header>
+<main class="container admin-main">
+  <div class="portal-hero"><div><span class="eyebrow">ADMIN CONSOLE</span><h1>Operations <span>dashboard.</span></h1><p>Manage applications, users, services, announcements and contact settings.</p></div></div>
+  <div class="portal-stats"><div><span>Users</span><strong id="aUsers">0</strong></div><div><span>Applications</span><strong id="aApps">0</strong></div><div><span>Processing</span><strong id="aProcessing">0</strong></div><div><span>Completed</span><strong id="aCompleted">0</strong></div></div>
+  <section class="admin-section"><div class="section-heading"><div><span class="eyebrow">APPLICATIONS</span><h2>Review & <span>update.</span></h2></div></div>
+    <div class="filters"><input id="search" placeholder="Search ID, mobile or service"><select id="statusFilter"><option value="">All statuses</option><option>Submitted</option><option>Under Review</option><option>Processing</option><option>Completed</option><option>Rejected</option></select></div>
+    <div class="table-wrap"><table><thead><tr><th>Reference</th><th>User</th><th>Service</th><th>Status</th><th>Updated</th><th>Action</th></tr></thead><tbody id="adminApps"></tbody></table></div>
+  </section>
+  <section class="admin-section two-col">
+    <div class="portal-card"><span class="eyebrow">USERS</span><h2>Registered <span>users.</span></h2><div class="table-wrap compact"><table><thead><tr><th>Name</th><th>Email</th><th>Mobile</th><th>Joined</th></tr></thead><tbody id="adminUsers"></tbody></table></div></div>
+    <div class="portal-card"><span class="eyebrow">CONTACT SETTINGS</span><h2>Business <span>details.</span></h2><form id="settingsForm"><label>Phone display<input id="setPhoneDisplay"></label><label>Phone link<input id="setPhoneLink"></label><label>WhatsApp number<input id="setWhatsapp"></label><label>Email<input id="setEmail"></label><label>Address<input id="setAddress"></label><label>Maps query<input id="setMap"></label><button class="btn btn-primary">Save contact settings</button></form></div>
+  </section>
+  <section class="admin-section two-col">
+    <div class="portal-card"><span class="eyebrow">SERVICE MANAGEMENT</span><h2>Manage <span>services.</span></h2><form id="serviceForm"><input type="hidden" id="serviceId"><label>Name<input id="serviceName" required></label><label>Description<textarea id="serviceDescription" required></textarea></label><label>Required documents<input id="serviceDocs" placeholder="Document 1, Document 2"></label><label>Processing information<input id="serviceProcess"></label><label>Fee display<input id="serviceFee" placeholder="e.g. ₹100 / As applicable"></label><label>Availability<select id="serviceAvailability"><option value="true">Available</option><option value="false">Unavailable</option></select></label><button class="btn btn-primary">Save service</button></form><div id="serviceList" class="admin-list"></div></div>
+    <div class="portal-card"><span class="eyebrow">ANNOUNCEMENTS</span><h2>Keep users <span>informed.</span></h2><form id="announcementForm"><label>Title<input id="announcementTitle" required></label><label>Message<textarea id="announcementMessage" required></textarea></label><button class="btn btn-primary">Publish announcement</button></form><div id="announcementList" class="admin-list"></div></div>
+  </section>
+</main>
+<script src="js/admin.js"></script>
+</body>
+</html>
