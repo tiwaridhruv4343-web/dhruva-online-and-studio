@@ -30,6 +30,16 @@
     <div class="portal-stats"><div><span>Security events</span><strong id="aSecurityEvents">0</strong></div><div><span>Active blocks</span><strong id="aSecurityBlocks">0</strong></div><div><span>Failed logins</span><strong id="aFailedLogins">0</strong></div><div><span>Honeypot hits</span><strong id="aHoneypot">0</strong></div></div>
     <div class="table-wrap"><table><thead><tr><th>Event</th><th>Route</th><th>Details</th><th>Time</th></tr></thead><tbody id="adminSecurity"></tbody></table></div>
   </section>
+  <section class="admin-section">
+    <div class="section-heading"><div><span class="eyebrow">SECURITY BOT CHAT</span><h2>Talk to your <span>security bot.</span></h2><p>Ask the bot about visitors, security events, failed logins, blocks, server status or a quick report. It uses your admin dashboard data and needs no paid AI service.</p></div></div>
+    <div class="portal-card">
+      <div id="securityChatMessages" style="min-height:180px;max-height:360px;overflow:auto;margin-bottom:14px;"></div>
+      <form id="securityChatForm" style="display:flex;gap:10px;align-items:flex-end;">
+        <input id="securityChatInput" autocomplete="off" placeholder="Type: Aaj kitne visitors aaye?" style="flex:1;">
+        <button class="btn btn-primary" type="submit">Send</button>
+      </form>
+    </div>
+  </section>
   <section class="admin-section"><div class="section-heading"><div><span class="eyebrow">APPLICATIONS</span><h2>Review & <span>update.</span></h2></div></div>
     <div class="filters"><input id="search" placeholder="Search ID, mobile or service"><select id="statusFilter"><option value="">All statuses</option><option>Submitted</option><option>Under Review</option><option>Processing</option><option>Completed</option><option>Rejected</option></select></div>
     <div class="table-wrap"><table><thead><tr><th>Reference</th><th>User</th><th>Service</th><th>Status</th><th>Updated</th><th>Action</th></tr></thead><tbody id="adminApps"></tbody></table></div>
