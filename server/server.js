@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS announcements(id INTEGER PRIMARY KEY AUTOINCREMENT,ti
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);\nCREATE TABLE IF NOT EXISTS visits(id INTEGER PRIMARY KEY AUTOINCREMENT,visitor_id TEXT NOT NULL,path TEXT NOT NULL,referrer TEXT NOT NULL DEFAULT '',user_agent TEXT NOT NULL DEFAULT '',device TEXT NOT NULL DEFAULT 'Unknown',ip_hash TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);\nCREATE INDEX IF NOT EXISTS idx_visits_created_at ON visits(created_at);\nCREATE INDEX IF NOT EXISTS idx_visits_visitor_id ON visits(visitor_id);
 CREATE TABLE IF NOT EXISTS security_events(id INTEGER PRIMARY KEY AUTOINCREMENT,event_type TEXT NOT NULL,ip_hash TEXT NOT NULL,route TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_security_events_created_at ON security_events(created_at);
+CREATE TABLE IF NOT EXISTS security_blocks(ip_hash TEXT PRIMARY KEY,reason TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS security_events(id INTEGER PRIMARY KEY AUTOINCREMENT,event_type TEXT NOT NULL,ip_hash TEXT NOT NULL,route TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_security_events_created_at ON security_events(created_at);
 CREATE INDEX IF NOT EXISTS idx_security_events_ip_hash ON security_events(ip_hash);
 CREATE TABLE IF NOT EXISTS security_blocks(ip_hash TEXT PRIMARY KEY,reason TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS security_events(id INTEGER PRIMARY KEY AUTOINCREMENT,ip_hash TEXT NOT NULL,event TEXT NOT NULL,path TEXT NOT NULL,user_agent TEXT NOT NULL DEFAULT '',details TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
@@ -54,6 +57,21 @@ function seed(){
 seed();
 
 app.use(express.json({limit:"1mb"}));app.use(cookieParser());
+const securityWindowMs=60*1000, securityMaxRequests=120;
+function requestIp(req){return String(req.ip||"").replace(/^::ffff:/,"")||"unknown"}
+function requestIpHash(req){return hash((process.env.SESSION_SECRET||"visitor-secret")+":"+requestIp(req))}
+function securityLog(req,type,details=""){db.prepare("INSERT INTO security_events(event_type,ip_hash,route,details,created_at) VALUES(?,?,?,?,?)").run(type,requestIpHash(req),req.path,String(details).slice(0,500),now())}
+function isBlocked(req){const b=db.prepare("SELECT expires_at FROM security_blocks WHERE ip_hash=?").get(requestIpHash(req));if(!b)return false;if(new Date(b.expires_at)<=new Date()){db.prepare("DELETE FROM security_blocks WHERE ip_hash=?").run(requestIpHash(req));return false}return true}
+function blockIp(req,reason,minutes=30){const expires=new Date(Date.now()+minutes*60000).toISOString();db.prepare("INSERT INTO security_blocks(ip_hash,reason,expires_at,created_at) VALUES(?,?,?,?) ON CONFLICT(ip_hash) DO UPDATE SET reason=excluded.reason,expires_at=excluded.expires_at").run(requestIpHash(req),reason,expires,now());securityLog(req,"IP_BLOCKED",reason)}
+app.use((req,res,next)=>{
+  if(req.path==="/api/health"||req.path==="/health")return next();
+  if(isBlocked(req))return res.status(429).json({error:"Too many suspicious requests. Try again later."});
+  const cutoff=new Date(Date.now()-securityWindowMs).toISOString();
+  const recent=db.prepare("SELECT COUNT(*) c FROM security_events WHERE ip_hash=? AND created_at>=?").get(requestIpHash(req),cutoff).c;
+  if(recent>securityMaxRequests){blockIp(req,"Rate limit exceeded",15);return res.status(429).json({error:"Too many requests. Please try again later."})}
+  next();
+});
+app.use((req,res,next)=>{const start=Date.now();res.on("finish",()=>{if(req.path.startsWith("/api/")&&[401,403,404,429].includes(res.statusCode))securityLog(req,"SUSPICIOUS_RESPONSE",`${res.statusCode} ${Date.now()-start}ms`)});next()});
 const securityWindowMs=60*1000, securityMaxRequests=120;
 function requestIp(req){return String(req.ip||"").replace(/^::ffff:/,"")||"unknown"}
 function requestIpHash(req){return hash((process.env.SESSION_SECRET||"visitor-secret")+":"+requestIp(req))}
@@ -156,6 +174,13 @@ app.get("/api/admin/security",auth,admin,(req,res)=>{
   const blocks=db.prepare("SELECT reason,expires_at,created_at FROM security_blocks WHERE expires_at>? ORDER BY expires_at DESC").all(now());
   const counts=db.prepare("SELECT event_type,COUNT(*) count FROM security_events GROUP BY event_type ORDER BY count DESC").all();
   res.json({events,blocks,counts});
+});
+app.post("/api/security/honeypot",(req,res)=>{securityLog(req,"HONEYPOT_TRIGGER","bot trap");blockIp(req,"Honeypot triggered",60);res.status(204).end()});
+app.get("/api/admin/security",auth,admin,(req,res)=>{
+ const events=db.prepare("SELECT id,event_type,route,details,created_at FROM security_events ORDER BY id DESC LIMIT 100").all();
+ const blocks=db.prepare("SELECT reason,expires_at,created_at FROM security_blocks WHERE expires_at>? ORDER BY expires_at DESC").all(now());
+ const counts=db.prepare("SELECT event_type,COUNT(*) count FROM security_events GROUP BY event_type ORDER BY count DESC").all();
+ res.json({events,blocks,counts});
 });
 app.post("/api/auth/login",async(req,res)=>{
  const {email,password}=req.body;
