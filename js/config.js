@@ -15,7 +15,7 @@ const SITE_CONFIG = {
     phoneLink: "+91 79746 74861",
     whatsappNumber: "917974674861", // Replace with WhatsApp number, country code included
     email: "tiwaridhruv4343@gmail.com",
-    address: "Your Address, Panna, Madhya Pradesh, India",
+    address: "Panna, Madhya Pradesh, India",
     mapQuery: "Panna, Madhya Pradesh, India"
   },
 
