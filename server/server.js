@@ -83,20 +83,15 @@ app.use((req,res,next)=>{
   next();
 });
 const publicDir=path.join(__dirname,"..");
-function visitorDevice(ua){
-  ua=String(ua||"").toLowerCase();
-  if(/mobile|android|iphone|ipad|ipod/.test(ua)) return "Mobile";
-  return "Desktop";
-}
+function visitorDevice(ua){ua=String(ua||"").toLowerCase();if(/mobile|android|iphone|ipad|ipod/.test(ua))return "Mobile";return "Desktop";}
 app.use((req,res,next)=>{
-  const isPage=req.method==="GET" && !req.path.startsWith("/api/") && !req.path.startsWith("/admin") && (req.path==="/" || req.path.endsWith(".html"));
-  if(!isPage) return next();
+  const isPage=req.method==="GET"&&!req.path.startsWith("/api/")&&!req.path.startsWith("/admin")&&(req.path==="/"||req.path.endsWith(".html"));
+  if(!isPage)return next();
   let visitorId=req.cookies.visitor_id;
-  if(!visitorId){ visitorId=crypto.randomBytes(18).toString("hex"); res.cookie("visitor_id",visitorId,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",maxAge:365*864e5,path:"/"}); }
+  if(!visitorId){visitorId=crypto.randomBytes(18).toString("hex");res.cookie("visitor_id",visitorId,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",maxAge:365*864e5,path:"/"});}
   const ip=String(req.ip||"").replace(/^::ffff:/,"");
   const ipHash=hash((process.env.SESSION_SECRET||"visitor-secret")+":"+ip);
-  db.prepare("INSERT INTO visits(visitor_id,path,referrer,user_agent,device,ip_hash,created_at) VALUES(?,?,?,?,?,?,?)")
-    .run(visitorId,req.path,String(req.get("referer")||"").slice(0,500),String(req.get("user-agent")||"").slice(0,500),visitorDevice(req.get("user-agent")),ipHash,now());
+  db.prepare("INSERT INTO visits(visitor_id,path,referrer,user_agent,device,ip_hash,created_at) VALUES(?,?,?,?,?,?,?)").run(visitorId,req.path,String(req.get("referer")||"").slice(0,500),String(req.get("user-agent")||"").slice(0,500),visitorDevice(req.get("user-agent")),ipHash,now());
   next();
 });
 const auth=(req,res,next)=>{
