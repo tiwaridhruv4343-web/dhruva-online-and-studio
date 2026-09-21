@@ -29,14 +29,8 @@ CREATE TABLE IF NOT EXISTS announcements(id INTEGER PRIMARY KEY AUTOINCREMENT,ti
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);\nCREATE TABLE IF NOT EXISTS visits(id INTEGER PRIMARY KEY AUTOINCREMENT,visitor_id TEXT NOT NULL,path TEXT NOT NULL,referrer TEXT NOT NULL DEFAULT '',user_agent TEXT NOT NULL DEFAULT '',device TEXT NOT NULL DEFAULT 'Unknown',ip_hash TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);\nCREATE INDEX IF NOT EXISTS idx_visits_created_at ON visits(created_at);\nCREATE INDEX IF NOT EXISTS idx_visits_visitor_id ON visits(visitor_id);
 CREATE TABLE IF NOT EXISTS security_events(id INTEGER PRIMARY KEY AUTOINCREMENT,event_type TEXT NOT NULL,ip_hash TEXT NOT NULL,route TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_security_events_created_at ON security_events(created_at);
-CREATE TABLE IF NOT EXISTS security_blocks(ip_hash TEXT PRIMARY KEY,reason TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS security_events(id INTEGER PRIMARY KEY AUTOINCREMENT,event_type TEXT NOT NULL,ip_hash TEXT NOT NULL,route TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_security_events_created_at ON security_events(created_at);
 CREATE INDEX IF NOT EXISTS idx_security_events_ip_hash ON security_events(ip_hash);
 CREATE TABLE IF NOT EXISTS security_blocks(ip_hash TEXT PRIMARY KEY,reason TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS security_events(id INTEGER PRIMARY KEY AUTOINCREMENT,ip_hash TEXT NOT NULL,event TEXT NOT NULL,path TEXT NOT NULL,user_agent TEXT NOT NULL DEFAULT '',details TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS security_blocks(ip_hash TEXT PRIMARY KEY,reason TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_security_events_created_at ON security_events(created_at);
 `);
 const now=()=>new Date().toISOString(), hash=t=>crypto.createHash("sha256").update(t).digest("hex"), random=()=>crypto.randomBytes(32).toString("hex");
 function seed(){
@@ -57,8 +51,9 @@ function seed(){
 seed();
 
 app.use(express.json({limit:"1mb"}));app.use(cookieParser());
+
 const securityWindowMs=60*1000, securityMaxRequests=120, requestBuckets=new Map();
-function requestIp(req){return String(req.ip||"").replace(/^::ffff:/,"")||"unknown"}
+function requestIp(req){return String(req.ip||req.socket.remoteAddress||"").replace(/^::ffff:/,"")||"unknown"}
 function requestIpHash(req){return hash((process.env.SESSION_SECRET||"visitor-secret")+":"+requestIp(req))}
 function securityLog(req,type,details=""){db.prepare("INSERT INTO security_events(event_type,ip_hash,route,details,created_at) VALUES(?,?,?,?,?)").run(type,requestIpHash(req),req.path,String(details).slice(0,500),now())}
 function isBlocked(req){const b=db.prepare("SELECT expires_at FROM security_blocks WHERE ip_hash=?").get(requestIpHash(req));if(!b)return false;if(new Date(b.expires_at)<=new Date()){db.prepare("DELETE FROM security_blocks WHERE ip_hash=?").run(requestIpHash(req));return false}return true}
@@ -73,22 +68,20 @@ app.use((req,res,next)=>{
   next();
 });
 app.use((req,res,next)=>{const start=Date.now();res.on("finish",()=>{if(req.path.startsWith("/api/")&&[401,403,404,429].includes(res.statusCode))securityLog(req,"SUSPICIOUS_RESPONSE",`${res.statusCode} ${Date.now()-start}ms`)});next()});
-const securityWindowMs=60*1000, securityMaxRequests=120;
-function requestIp(req){return String(req.ip||"").replace(/^::ffff:/,"")||"unknown"}
-function requestIpHash(req){return hash((process.env.SESSION_SECRET||"visitor-secret")+":"+requestIp(req))}
-function securityLog(req,type,details=""){db.prepare("INSERT INTO security_events(event_type,ip_hash,route,details,created_at) VALUES(?,?,?,?,?)").run(type,requestIpHash(req),req.path,String(details).slice(0,500),now())}
-function isBlocked(req){const b=db.prepare("SELECT expires_at FROM security_blocks WHERE ip_hash=?").get(requestIpHash(req));if(!b)return false;if(new Date(b.expires_at)<=new Date()){db.prepare("DELETE FROM security_blocks WHERE ip_hash=?").run(requestIpHash(req));return false}return true}
-function blockIp(req,reason,minutes=30){const expires=new Date(Date.now()+minutes*60000).toISOString();db.prepare("INSERT INTO security_blocks(ip_hash,reason,expires_at,created_at) VALUES(?,?,?,?) ON CONFLICT(ip_hash) DO UPDATE SET reason=excluded.reason,expires_at=excluded.expires_at").run(requestIpHash(req),reason,expires,now());securityLog(req,"IP_BLOCKED",reason)}
+app.use((req,res,next)=>{res.setHeader("X-Content-Type-Options","nosniff");res.setHeader("X-Frame-Options","DENY");res.setHeader("Referrer-Policy","strict-origin-when-cross-origin");next()});
+
+const publicDir=path.join(__dirname,"..");
+function visitorDevice(ua){ua=String(ua||"").toLowerCase();if(/mobile|android|iphone|ipad|ipod/.test(ua))return "Mobile";return "Desktop";}
 app.use((req,res,next)=>{
-  if(req.path==="/api/health"||req.path==="/health")return next();
-  if(isBlocked(req))return res.status(429).json({error:"Too many suspicious requests. Try again later."});
-  const cutoff=new Date(Date.now()-securityWindowMs).toISOString();
-  const recent=db.prepare("SELECT COUNT(*) c FROM security_events WHERE ip_hash=? AND created_at>=?").get(requestIpHash(req),cutoff).c;
-  if(recent>securityMaxRequests){blockIp(req,"Rate limit exceeded",15);return res.status(429).json({error:"Too many requests. Please try again later."})}
+  const isPage=req.method==="GET"&&!req.path.startsWith("/api/")&&!req.path.startsWith("/admin")&&(req.path==="/"||req.path.endsWith(".html"));
+  if(!isPage)return next();
+  let visitorId=req.cookies.visitor_id;
+  if(!visitorId){visitorId=crypto.randomBytes(18).toString("hex");res.cookie("visitor_id",visitorId,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",maxAge:365*864e5,path:"/"});}
+  const ip=String(req.ip||"").replace(/^::ffff:/,"");
+  const ipHash=hash((process.env.SESSION_SECRET||"visitor-secret")+":"+ip);
+  db.prepare("INSERT INTO visits(visitor_id,path,referrer,user_agent,device,ip_hash,created_at) VALUES(?,?,?,?,?,?,?)").run(visitorId,req.path,String(req.get("referer")||"").slice(0,500),String(req.get("user-agent")||"").slice(0,500),visitorDevice(req.get("user-agent")),ipHash,now());
   next();
 });
-app.use((req,res,next)=>{const start=Date.now();res.on("finish",()=>{if(req.path.startsWith("/api/")&&[401,403,404,429].includes(res.statusCode))securityLog(req,"SUSPICIOUS_RESPONSE",`${res.statusCode} ${Date.now()-start}ms`)});next()});
-app.use((req,res,next)=>{res.setHeader("X-Content-Type-Options","nosniff");res.setHeader("X-Frame-Options","DENY");res.setHeader("Referrer-Policy","strict-origin-when-cross-origin");next()});
 const publicDir=path.join(__dirname,"..");
 function visitorDevice(ua){
   ua=String(ua||"").toLowerCase();
@@ -141,11 +134,6 @@ app.use((req,res,next)=>{
   }
   next();
 });
-app.post("/api/security/honeypot",(req,res)=>{
-  securityLog(req,"honeypot_trigger","Automated trap request");
-  addBlock(req,"Honeypot triggered",60);
-  res.status(403).json({error:"Request blocked"});
-});
 app.use(express.static(publicDir,{index:"index.html"}));
 
 const auth=(req,res,next)=>{
@@ -169,20 +157,6 @@ app.post("/api/auth/register",async(req,res)=>{
   issueSession(r.lastInsertRowid,res);res.json({ok:true,role:"user"});
  }catch(e){res.status(409).json({error:"An account with this email already exists"})}
 });
-app.post("/api/security/honeypot",(req,res)=>{securityLog(req,"HONEYPOT_TRIGGER","bot trap");blockIp(req,"Honeypot triggered",60);res.status(204).end()});
-app.get("/api/admin/security",auth,admin,(req,res)=>{
-  const events=db.prepare("SELECT id,event_type,route,details,created_at FROM security_events ORDER BY id DESC LIMIT 100").all();
-  const blocks=db.prepare("SELECT reason,expires_at,created_at FROM security_blocks WHERE expires_at>? ORDER BY expires_at DESC").all(now());
-  const counts=db.prepare("SELECT event_type,COUNT(*) count FROM security_events GROUP BY event_type ORDER BY count DESC").all();
-  res.json({events,blocks,counts});
-});
-app.post("/api/security/honeypot",(req,res)=>{securityLog(req,"HONEYPOT_TRIGGER","bot trap");blockIp(req,"Honeypot triggered",60);res.status(204).end()});
-app.get("/api/admin/security",auth,admin,(req,res)=>{
- const events=db.prepare("SELECT id,event_type,route,details,created_at FROM security_events ORDER BY id DESC LIMIT 100").all();
- const blocks=db.prepare("SELECT reason,expires_at,created_at FROM security_blocks WHERE expires_at>? ORDER BY expires_at DESC").all(now());
- const counts=db.prepare("SELECT event_type,COUNT(*) count FROM security_events GROUP BY event_type ORDER BY count DESC").all();
- res.json({events,blocks,counts});
-});
 app.post("/api/auth/login",async(req,res)=>{
  const {email,password}=req.body;
  const loginKey=hash(String(email||"").toLowerCase().trim()+":"+requestIp(req));
@@ -193,6 +167,37 @@ app.post("/api/auth/login",async(req,res)=>{
  if(!u||!(await bcrypt.compare(password||"",u.password_hash))){securityLog(req,"LOGIN_FAILED","invalid credentials");return res.status(401).json({error:"Invalid email or password"});}
  securityLog(req,"LOGIN_SUCCESS","authenticated");
  issueSession(u.id,res);res.json({ok:true,role:u.role});
+});
+app.post("/api/security/honeypot",(req,res)=>{securityLog(req,"HONEYPOT_TRIGGER","bot trap");blockIp(req,"Honeypot triggered",60);res.status(204).end()});
+app.get("/api/admin/security",auth,admin,(req,res)=>{
+ const events=db.prepare("SELECT id,event_type,route,details,created_at FROM security_events ORDER BY id DESC LIMIT 100").all();
+ const blocks=db.prepare("SELECT reason,expires_at,created_at FROM security_blocks WHERE expires_at>? ORDER BY expires_at DESC").all(now());
+ const counts=db.prepare("SELECT event_type,COUNT(*) count FROM security_events GROUP BY event_type ORDER BY count DESC").all();
+ res.json({events,blocks,counts});
+});
+app.post("/api/admin/security-chat",auth,admin,(req,res)=>{
+ const raw=String(req.body?.message||"").trim();
+ if(!raw)return res.status(400).json({error:"Message is required"});
+ const m=raw.toLowerCase();
+ const today=new Date(); today.setHours(0,0,0,0); const todayIso=today.toISOString();
+ const totalVisits=db.prepare("SELECT COUNT(*) c FROM visits").get().c;
+ const uniqueVisitors=db.prepare("SELECT COUNT(DISTINCT visitor_id) c FROM visits").get().c;
+ const todayVisits=db.prepare("SELECT COUNT(*) c FROM visits WHERE created_at>=?").get(todayIso).c;
+ const failed15=db.prepare("SELECT COUNT(*) c FROM security_events WHERE event_type='LOGIN_FAILED' AND created_at>=?").get(new Date(Date.now()-15*60000).toISOString()).c;
+ const events24=db.prepare("SELECT COUNT(*) c FROM security_events WHERE created_at>=?").get(new Date(Date.now()-24*3600000).toISOString()).c;
+ const activeBlocks=db.prepare("SELECT COUNT(*) c FROM security_blocks WHERE expires_at>?").get(now()).c;
+ const topEvents=db.prepare("SELECT event_type,COUNT(*) count FROM security_events WHERE created_at>=? GROUP BY event_type ORDER BY count DESC LIMIT 5").all(new Date(Date.now()-24*3600000).toISOString());
+ const formatEvents=topEvents.map(x=>x.event_type+"="+x.count).join(", ")||"none";
+ let reply;
+ if(/help|command|kya kar|what can|madad/.test(m)) reply="Main visitors, security events, failed logins, active blocks, website status aur report ke baare mein bata sakta hoon. Aap pooch sakte ho: “Aaj kitne visitors aaye?”, “Koi attack hua?”, “Failed logins kitne hain?”, “Website status”, ya “Security report”.";
+ else if(/visitor|visits|traffic|users aaye|kitne log|website par/.test(m)) reply=`Visitor stats: total visits ${totalVisits}, unique visitors ${uniqueVisitors}, aur aaj ${todayVisits} visits.`;
+ else if(/failed login|login fail|wrong password/.test(m)) reply=`Last 15 minutes mein ${failed15} failed login attempt(s) record hue hain.`;
+ else if(/block|blocked|ban/.test(m)) reply=`Abhi ${activeBlocks} active security block(s) hain.`;
+ else if(/attack|hack|threat|suspicious|security|danger/.test(m)) reply=`Last 24 hours mein ${events24} security event(s) record hue. Top event types: ${formatEvents}. Main raw evidence ke basis par bata raha hoon; event hona zaroori nahi ki successful attack ho.`;
+ else if(/status|health|server|online/.test(m)) reply=`Website server process online hai. Uptime ${Math.floor(process.uptime())} seconds hai, database connected hai, aur ${activeBlocks} active security block(s) hain.`;
+ else if(/report|summary|report do|security report/.test(m)) reply=`Security report: last 24h mein ${events24} events, last 15m mein ${failed15} failed logins, ${activeBlocks} active blocks. Visitor total ${totalVisits}, unique ${uniqueVisitors}, today ${todayVisits}.`;
+ else reply="Main abhi predefined security/website commands samajhta hoon. “help” likho aur available commands dikha deta hoon.";
+ res.json({reply});
 });
 app.post("/api/auth/logout",(req,res)=>{const raw=req.cookies.session;if(raw)db.prepare("DELETE FROM sessions WHERE token_hash=?").run(hash(raw));res.clearCookie("session");res.json({ok:true})});
 app.get("/api/auth/me",(req,res)=>{try{auth(req,res,()=>res.json({user:safeUser(req.user)}))}catch{res.json({user:null})}});
@@ -239,12 +244,6 @@ app.get("/api/admin/visits",auth,admin,(req,res)=>{
  const today=db.prepare("SELECT COUNT(*) visits,COUNT(DISTINCT visitor_id) unique_visitors FROM visits WHERE date(created_at)=date('now')").get();
  const recent=db.prepare("SELECT id,visitor_id,path,referrer,device,created_at FROM visits ORDER BY id DESC LIMIT 100").all();
  res.json({totals,today,recent});
-});
-app.get("/api/admin/security",auth,admin,(req,res)=>{
- const events=db.prepare("SELECT id,event,path,details,created_at FROM security_events ORDER BY id DESC LIMIT 100").all();
- const blocks=db.prepare("SELECT reason,expires_at,created_at FROM security_blocks WHERE expires_at>? ORDER BY expires_at DESC").all(now());
- const totals=db.prepare("SELECT COUNT(*) c FROM security_events").get().c;
- res.json({totals,events,blocks});
 });
 app.get("/api/admin/stats",auth,admin,(req,res)=>{
  const count=q=>db.prepare(q).get().c;res.json({users:count("SELECT COUNT(*) c FROM users WHERE role='user'"),applications:count("SELECT COUNT(*) c FROM applications"),processing:count("SELECT COUNT(*) c FROM applications WHERE status IN ('Under Review','Processing')"),completed:count("SELECT COUNT(*) c FROM applications WHERE status='Completed'")});
