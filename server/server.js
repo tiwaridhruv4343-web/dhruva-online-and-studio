@@ -68,7 +68,17 @@ app.use((req,res,next)=>{
   next();
 });
 app.use((req,res,next)=>{const start=Date.now();res.on("finish",()=>{if(req.path.startsWith("/api/")&&[401,403,404,429].includes(res.statusCode))securityLog(req,"SUSPICIOUS_RESPONSE",`${res.statusCode} ${Date.now()-start}ms`)});next()});
-app.use((req,res,next)=>{res.setHeader("X-Content-Type-Options","nosniff");res.setHeader("X-Frame-Options","DENY");res.setHeader("Referrer-Policy","strict-origin-when-cross-origin");next()});
+app.use((req,res,next)=>{
+  res.setHeader("X-Content-Type-Options","nosniff");
+  res.setHeader("X-Frame-Options","DENY");
+  res.setHeader("Referrer-Policy","strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy","camera=(), microphone=(), geolocation=()");
+  if(process.env.NODE_ENV==="production"){
+    res.setHeader("Strict-Transport-Security","max-age=31536000; includeSubDomains");
+  }
+  if(req.path.startsWith("/api/")) res.setHeader("Cache-Control","no-store");
+  next();
+});
 
 const publicDir=path.join(__dirname,"..");
 function visitorDevice(ua){ua=String(ua||"").toLowerCase();if(/mobile|android|iphone|ipad|ipod/.test(ua))return "Mobile";return "Desktop";}
@@ -82,7 +92,15 @@ app.use((req,res,next)=>{
   db.prepare("INSERT INTO visits(visitor_id,path,referrer,user_agent,device,ip_hash,created_at) VALUES(?,?,?,?,?,?,?)").run(visitorId,req.path,String(req.get("referer")||"").slice(0,500),String(req.get("user-agent")||"").slice(0,500),visitorDevice(req.get("user-agent")),ipHash,now());
   next();
 });
-app.use(express.static(publicDir,{index:"index.html"}));
+// Never expose backend source, local database files, uploads, dependency metadata or deployment/config files.
+app.use((req,res,next)=>{
+  const p=String(req.path||"");
+  const blocked=/^\/server(?:\/|$)/i.test(p) ||
+    ["/package.json","/package-lock.json","/render.yaml","/.node-version","/.gitignore"].includes(p);
+  if(blocked)return res.status(404).end();
+  next();
+});
+app.use(express.static(publicDir,{index:"index.html",dotfiles:"deny"}));
 
 const auth=(req,res,next)=>{
  const raw=req.cookies.session; if(!raw)return res.status(401).json({error:"Authentication required"});
@@ -91,7 +109,12 @@ const auth=(req,res,next)=>{
  req.user={id:row.id,name:row.name,email:row.email,mobile:row.mobile,role:row.role};next();
 };
 const admin=(req,res,next)=>{if(req.user?.role!=="admin")return res.status(403).json({error:"Admin access required"});next()};
-function issueSession(userId,res){const token=random();db.prepare("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)").run(hash(token),userId,new Date(Date.now()+7*864e5).toISOString());res.cookie("session",token,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",maxAge:7*864e5,path:"/"});}
+function issueSession(userId,res){
+  const token=random();
+  const maxAge=24*60*60*1000;
+  db.prepare("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)").run(hash(token),userId,new Date(Date.now()+maxAge).toISOString());
+  res.cookie("session",token,{httpOnly:true,sameSite:"strict",secure:process.env.NODE_ENV==="production",maxAge,path:"/"});
+}
 function safeUser(u){return {id:u.id,name:u.name,email:u.email,mobile:u.mobile,role:u.role};}
 function ref(){return "DHO-"+new Date().toISOString().slice(0,10).replaceAll("-","")+"-"+crypto.randomBytes(3).toString("hex").toUpperCase()}
 
@@ -110,7 +133,10 @@ app.post("/api/auth/login",async(req,res)=>{
  const loginKey=hash(String(email||"").toLowerCase().trim()+":"+requestIp(req));
  const cutoff=new Date(Date.now()-15*60*1000).toISOString();
  const failed=db.prepare("SELECT COUNT(*) c FROM security_events WHERE event_type='LOGIN_FAILED' AND ip_hash=? AND created_at>=?").get(requestIpHash(req),cutoff).c;
- if(failed>=8){securityLog(req,"LOGIN_ABUSE","8+ failed login attempts in 15 minutes (monitoring only)");}
+ if(failed>=8){
+   securityLog(req,"LOGIN_ABUSE","login temporarily throttled after repeated failures");
+   return res.status(429).json({error:"Too many failed login attempts. Please try again later."});
+ }
  const u=db.prepare("SELECT * FROM users WHERE email=?").get(String(email||"").toLowerCase().trim());
  if(!u||!(await bcrypt.compare(password||"",u.password_hash))){securityLog(req,"LOGIN_FAILED","invalid credentials");return res.status(401).json({error:"Invalid email or password"});}
  securityLog(req,"LOGIN_SUCCESS","authenticated");
@@ -154,7 +180,13 @@ app.post("/api/admin/security-chat",auth,admin,(req,res)=>{
  else if(/report|summary|report do|security report/.test(m)) reply=`Security report: last 24h mein ${events24} events, last 15m mein ${failed15} failed logins, ${activeBlocks} active blocks. Visitor total ${totalVisits}, unique ${uniqueVisitors}, today ${todayVisits}.`;
  else reply="Main DHRUVA ONLINE AND STUDIO ke business, services, contact details aur security/website data se jude sawaalon ka jawab de sakta hoon. “help” likho."; res.json({reply});
 });
-app.post("/api/auth/logout",(req,res)=>{const raw=req.cookies.session;if(raw)db.prepare("DELETE FROM sessions WHERE token_hash=?").run(hash(raw));res.clearCookie("session");res.json({ok:true})});
+app.post("/api/auth/logout",(req,res)=>{
+  const raw=req.cookies.session;
+  if(raw)db.prepare("DELETE FROM sessions WHERE token_hash=?").run(hash(raw));
+  res.clearCookie("session",{httpOnly:true,sameSite:"strict",secure:process.env.NODE_ENV==="production",path:"/"});
+  res.setHeader("Clear-Site-Data",'"cache"');
+  res.json({ok:true});
+});
 app.get("/api/auth/me",(req,res)=>{try{auth(req,res,()=>res.json({user:safeUser(req.user)}))}catch{res.json({user:null})}});
 app.post("/api/auth/forgot",(req,res)=>{
  // Production-ready UI endpoint: no reset token is exposed to the browser.
@@ -170,7 +202,24 @@ app.get("/api/services",(req,res)=>{
 app.get("/api/applications",(req,res)=>{auth(req,res,()=>{
  const apps=db.prepare("SELECT a.*,s.name service_name FROM applications a JOIN services s ON s.id=a.service_id WHERE a.user_id=? ORDER BY a.id DESC").all(req.user.id);res.json({applications:apps});
 })});
-const upload=multer({storage:multer.diskStorage({destination:UPLOAD_DIR,filename:(req,file,cb)=>cb(null,crypto.randomUUID()+path.extname(file.originalname).toLowerCase())}),limits:{files:5,fileSize:5*1024*1024},fileFilter:(req,file,cb)=>cb(null,["application/pdf","image/jpeg","image/png"].includes(file.mimetype))});
+const upload=multer({
+  storage:multer.diskStorage({
+    destination:UPLOAD_DIR,
+    filename:(req,file,cb)=>{
+      const ext=path.extname(String(file.originalname||"")).toLowerCase();
+      const allowedExt={".pdf":"application/pdf",".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png"};
+      if(!allowedExt[ext]||allowedExt[ext]!==file.mimetype)return cb(new Error("Unsupported file type"));
+      cb(null,crypto.randomUUID()+ext);
+    }
+  }),
+  limits:{files:5,fileSize:5*1024*1024},
+  fileFilter:(req,file,cb)=>{
+    const ext=path.extname(String(file.originalname||"")).toLowerCase();
+    const allowedExt={".pdf":"application/pdf",".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png"};
+    const ok=Boolean(allowedExt[ext]&&allowedExt[ext]===file.mimetype&&String(file.originalname||"").length<=180);
+    cb(null,ok);
+  }
+});
 app.post("/api/applications",auth,upload.array("documents",5),(req,res)=>{
  try{
   const service=db.prepare("SELECT * FROM services WHERE id=? AND available=1").get(req.body.service_id);if(!service)return res.status(400).json({error:"Service unavailable"});
@@ -221,7 +270,7 @@ app.get("/api/admin/documents/:id",auth,admin,(req,res)=>{
  const full=path.join(UPLOAD_DIR,d.stored_name);
  if(!fs.existsSync(full))return res.status(404).json({error:"Stored file not found"});
  res.setHeader("Content-Type",d.mime_type);
- res.setHeader("Content-Disposition",`inline; filename="${String(d.original_name).replace(/["\\\\]/g,"_")}"`);
+ res.setHeader("Content-Disposition",`attachment; filename="${String(d.original_name).replace(/[^a-zA-Z0-9._ -]/g,"_").slice(0,120)}"`);
  res.sendFile(full);
 });
 app.get("/api/admin/services",auth,admin,(req,res)=>res.redirect("/api/services"));
