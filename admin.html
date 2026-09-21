@@ -10,6 +10,16 @@
 <main class="container admin-main">
   <div class="portal-hero"><div><span class="eyebrow">ADMIN CONSOLE</span><h1>Operations <span>dashboard.</span></h1><p>Manage applications, users, services, announcements and contact settings.</p></div></div>
   <div class="portal-stats"><div><span>Users</span><strong id="aUsers">0</strong></div><div><span>Applications</span><strong id="aApps">0</strong></div><div><span>Processing</span><strong id="aProcessing">0</strong></div><div><span>Completed</span><strong id="aCompleted">0</strong></div></div>
+  <section class="admin-section">
+    <div class="section-heading"><div><span class="eyebrow">WEBSITE VISITORS</span><h2>Visitor <span>activity.</span></h2><p>Anonymous website visit tracking. Names and phone numbers are not collected from normal page visits.</p></div></div>
+    <div class="portal-stats">
+      <div><span>Total visits</span><strong id="aVisits">0</strong></div>
+      <div><span>Unique visitors</span><strong id="aUniqueVisitors">0</strong></div>
+      <div><span>Today's visits</span><strong id="aTodayVisits">0</strong></div>
+      <div><span>Today's unique</span><strong id="aTodayUnique">0</strong></div>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Visitor</th><th>Page</th><th>Device</th><th>Referrer</th><th>Visited</th></tr></thead><tbody id="adminVisits"></tbody></table></div>
+  </section>
   <section class="admin-section"><div class="section-heading"><div><span class="eyebrow">APPLICATIONS</span><h2>Review & <span>update.</span></h2></div></div>
     <div class="filters"><input id="search" placeholder="Search ID, mobile or service"><select id="statusFilter"><option value="">All statuses</option><option>Submitted</option><option>Under Review</option><option>Processing</option><option>Completed</option><option>Rejected</option></select></div>
     <div class="table-wrap"><table><thead><tr><th>Reference</th><th>User</th><th>Service</th><th>Status</th><th>Updated</th><th>Action</th></tr></thead><tbody id="adminApps"></tbody></table></div>
