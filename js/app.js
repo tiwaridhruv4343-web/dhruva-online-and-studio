@@ -97,7 +97,7 @@ document.addEventListener("DOMContentLoaded", () => {
       `Service: ${service ? service.title : "General enquiry"}`,
       `Message: ${form.get("message")}`
     ].join("\n");
-    window.location.href = `${waBase}?text=${encodeURIComponent(text)}`;
+    window.open(`${waBase}?text=${encodeURIComponent(text)}`, "_blank", "noopener");
   });
 
   const observer = new IntersectionObserver(entries => {
