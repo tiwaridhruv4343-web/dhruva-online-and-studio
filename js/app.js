@@ -20,7 +20,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#year").textContent = new Date().getFullYear();
 
   const waNumber = SITE_CONFIG.contact.whatsappNumber;
-  const waUrl = text => `https://api.whatsapp.com/send?phone=${waNumber}&text=${encodeURIComponent(text)}`;
+  const waUrl = text => `https://wa.me/${waNumber}?text=${encodeURIComponent(text)}`;
   const openWhatsApp = text => {
     const url = waUrl(text);
     if (/Android/i.test(navigator.userAgent)) {
