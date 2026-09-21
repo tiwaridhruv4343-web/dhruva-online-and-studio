@@ -1,16 +1,11 @@
 const api=async(url,o={})=>{const r=await fetch(url,{headers:{"Content-Type":"application/json",...(o.headers||{})},...o});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||"Request failed");return d};const $=s=>document.querySelector(s);let allApps=[];
-async function load(){try{const me=await api("/api/auth/me");if(!me.user||me.user.role!=="admin")return location.href="/auth.html";const [stats,apps,services,anns,users,settings,visits,security]=await Promise.all([api("/api/admin/stats"),api("/api/admin/applications"),api("/api/services"),api("/api/admin/announcements"),api("/api/admin/users"),api("/api/admin/settings"),api("/api/admin/visits"),api("/api/admin/security"),api("/api/admin/security")]);$("#aUsers").textContent=stats.users;$("#aApps").textContent=stats.applications;$("#aProcessing").textContent=stats.processing;$("#aCompleted").textContent=stats.completed;allApps=apps.applications;renderApps();renderServices(services.services);renderAnnouncements(anns.announcements);renderUsers(users.users);renderSettings(settings.settings);renderVisits(visits);renderSecurity(security)}catch(e){location.href="/auth.html"}}
+async function load(){try{const me=await api("/api/auth/me");if(!me.user||me.user.role!=="admin")return location.href="/auth.html";const [stats,apps,services,anns,users,settings,visits,security]=await Promise.all([api("/api/admin/stats"),api("/api/admin/applications"),api("/api/services"),api("/api/admin/announcements"),api("/api/admin/users"),api("/api/admin/settings"),api("/api/admin/visits"),api("/api/admin/security")]);$("#aUsers").textContent=stats.users;$("#aApps").textContent=stats.applications;$("#aProcessing").textContent=stats.processing;$("#aCompleted").textContent=stats.completed;allApps=apps.applications;renderApps();renderServices(services.services);renderAnnouncements(anns.announcements);renderUsers(users.users);renderSettings(settings.settings);renderVisits(visits);renderSecurity(security)}catch(e){location.href="/auth.html"}}
 function renderVisits(data){
   $("#aVisits").textContent=data.totals.visits||0;
   $("#aUniqueVisitors").textContent=data.totals.unique_visitors||0;
   $("#aTodayVisits").textContent=data.today.visits||0;
   $("#aTodayUnique").textContent=data.today.unique_visitors||0;
   $("#adminVisits").innerHTML=(data.recent||[]).map(v=>`<tr><td><b>${esc(v.visitor_id.slice(0,10))}…</b></td><td>${esc(v.path)}</td><td>${esc(v.device)}</td><td>${esc(v.referrer||"Direct")}</td><td>${fmt(v.created_at)}</td></tr>`).join("")||`<tr><td colspan="5">No visits recorded yet.</td></tr>`;
-}
-function renderSecurity(data){
-  $("#aSecurityEvents").textContent=data.totals||0;
-  $("#aSecurityBlocks").textContent=(data.blocks||[]).length;
-  $("#adminSecurity").innerHTML=(data.events||[]).map(v=>`<tr><td><b>${esc(v.event)}</b></td><td>${esc(v.path)}</td><td>${esc(v.details||"")}</td><td>${fmt(v.created_at)}</td></tr>`).join("")||`<tr><td colspan="4">No security events recorded.</td></tr>`;
 }
 function renderSecurity(data){
   const counts=Object.fromEntries((data.counts||[]).map(x=>[x.event_type,x.count]));
@@ -29,6 +24,21 @@ $("#search").oninput=renderApps;$("#statusFilter").onchange=renderApps;
 $("#adminLogout").onclick=async()=>{await api("/api/auth/logout",{method:"POST"});location.href="/index.html"};
 $("#serviceForm").onsubmit=async e=>{e.preventDefault();const body={name:$("#serviceName").value,description:$("#serviceDescription").value,required_documents:$("#serviceDocs").value.split(",").map(x=>x.trim()).filter(Boolean),processing_info:$("#serviceProcess").value,fee_display:$("#serviceFee").value,available:$("#serviceAvailability").value==="true"};const id=$("#serviceId").value;await api(id?`/api/admin/services/${id}`:"/api/admin/services",{method:id?"PUT":"POST",body:JSON.stringify(body)});e.target.reset();$("#serviceId").value="";load()};
 $("#announcementForm").onsubmit=async e=>{e.preventDefault();await api("/api/admin/announcements",{method:"POST",body:JSON.stringify({title:$("#announcementTitle").value,message:$("#announcementMessage").value})});e.target.reset();load()};
+const chatForm=$("#securityChatForm"),chatInput=$("#securityChatInput"),chatMessages=$("#securityChatMessages");
+function addChatMessage(text,who){
+  const div=document.createElement("div");
+  div.style.cssText="margin:8px 0;padding:10px 12px;border-radius:10px;background:"+(who==="user"?"rgba(255,255,255,.08)":"rgba(0,180,255,.10)");
+  div.innerHTML="<b>"+(who==="user"?"You":"Security Bot")+"</b><div style=\"margin-top:4px;white-space:pre-wrap\">"+esc(text)+"</div>";
+  chatMessages.appendChild(div);chatMessages.scrollTop=chatMessages.scrollHeight;
+}
+chatForm.onsubmit=async e=>{
+ e.preventDefault();const message=chatInput.value.trim();if(!message)return;
+ addChatMessage(message,"user");chatInput.value="";chatInput.disabled=true;
+ try{const d=await api("/api/admin/security-chat",{method:"POST",body:JSON.stringify({message})});addChatMessage(d.reply||"No response.","bot")}
+ catch(err){addChatMessage("Error: "+err.message,"bot")}
+ finally{chatInput.disabled=false;chatInput.focus()}
+};
+addChatMessage("Namaste! Main aapke security dashboard ka bot hoon. “help” likhkar commands dekh sakte ho.","bot");
 function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]))}function fmt(v){return new Date(v).toLocaleString()}load();
 document.addEventListener("click",async e=>{
  const del=e.target.closest("[data-delete]"); if(!del)return;
