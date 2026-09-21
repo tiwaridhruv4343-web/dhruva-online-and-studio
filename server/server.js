@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY AUTOINCREMENT,applic
 CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,title TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS announcements(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);\nCREATE TABLE IF NOT EXISTS visits(id INTEGER PRIMARY KEY AUTOINCREMENT,visitor_id TEXT NOT NULL,path TEXT NOT NULL,referrer TEXT NOT NULL DEFAULT '',user_agent TEXT NOT NULL DEFAULT '',device TEXT NOT NULL DEFAULT 'Unknown',ip_hash TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);\nCREATE INDEX IF NOT EXISTS idx_visits_created_at ON visits(created_at);\nCREATE INDEX IF NOT EXISTS idx_visits_visitor_id ON visits(visitor_id);
+CREATE TABLE IF NOT EXISTS security_events(id INTEGER PRIMARY KEY AUTOINCREMENT,ip_hash TEXT NOT NULL,event TEXT NOT NULL,path TEXT NOT NULL,user_agent TEXT NOT NULL DEFAULT '',details TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS security_blocks(ip_hash TEXT PRIMARY KEY,reason TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_security_events_created_at ON security_events(created_at);
 `);
 const now=()=>new Date().toISOString(), hash=t=>crypto.createHash("sha256").update(t).digest("hex"), random=()=>crypto.randomBytes(32).toString("hex");
 function seed(){
@@ -64,6 +67,46 @@ app.use((req,res,next)=>{
   db.prepare("INSERT INTO visits(visitor_id,path,referrer,user_agent,device,ip_hash,created_at) VALUES(?,?,?,?,?,?,?)")
     .run(visitorId,req.path,String(req.get("referer")||"").slice(0,500),String(req.get("user-agent")||"").slice(0,500),visitorDevice(req.get("user-agent")),ipHash,now());
   next();
+});
+// Free built-in security bot: no paid service or external API required.
+const securityWindow=new Map(), loginWindow=new Map();
+function clientIp(req){return String(req.ip||req.socket.remoteAddress||"").replace(/^::ffff:/,"");}
+function securityLog(req,event,details=""){
+  const ipHash=hash((process.env.SESSION_SECRET||"security-secret")+":"+clientIp(req));
+  db.prepare("INSERT INTO security_events(ip_hash,event,path,user_agent,details,created_at) VALUES(?,?,?,?,?,?)").run(ipHash,event,req.path,String(req.get("user-agent")||"").slice(0,500),String(details).slice(0,500),now());
+}
+function blocked(req){
+  const ipHash=hash((process.env.SESSION_SECRET||"security-secret")+":"+clientIp(req));
+  const row=db.prepare("SELECT * FROM security_blocks WHERE ip_hash=?").get(ipHash);
+  if(!row)return false;
+  if(new Date(row.expires_at)<=new Date()){db.prepare("DELETE FROM security_blocks WHERE ip_hash=?").run(ipHash);return false;}
+  return true;
+}
+function addBlock(req,reason,minutes){
+  const ipHash=hash((process.env.SESSION_SECRET||"security-secret")+":"+clientIp(req));
+  db.prepare("INSERT INTO security_blocks(ip_hash,reason,expires_at,created_at) VALUES(?,?,?,?) ON CONFLICT(ip_hash) DO UPDATE SET reason=excluded.reason,expires_at=excluded.expires_at").run(ipHash,reason,new Date(Date.now()+minutes*60000).toISOString(),now());
+  securityLog(req,"temporary_block",reason);
+}
+function hitLimit(store,key,limit,windowMs){
+  const t=Date.now(), old=store.get(key)||[], fresh=old.filter(x=>t-x<windowMs);
+  fresh.push(t); store.set(key,fresh);
+  return fresh.length>limit;
+}
+app.use((req,res,next)=>{
+  if(req.path.startsWith("/api/") && blocked(req)) return res.status(429).json({error:"Temporarily blocked by security protection. Try again later."});
+  if(req.path.startsWith("/api/") && req.method!=="OPTIONS"){
+    if(hitLimit(securityWindow,clientIp(req),30,30000)){
+      securityLog(req,"api_rate_limit","Too many API requests");
+      addBlock(req,"Too many API requests",15);
+      return res.status(429).json({error:"Too many requests. Please try again later."});
+    }
+  }
+  next();
+});
+app.post("/api/security/honeypot",(req,res)=>{
+  securityLog(req,"honeypot_trigger","Automated trap request");
+  addBlock(req,"Honeypot triggered",60);
+  res.status(403).json({error:"Request blocked"});
 });
 app.use(express.static(publicDir,{index:"index.html"}));
 
