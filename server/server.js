@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS applications(id INTEGER PRIMARY KEY AUTOINCREMENT,ref
 CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY AUTOINCREMENT,application_id INTEGER NOT NULL,original_name TEXT NOT NULL,stored_name TEXT NOT NULL,mime_type TEXT NOT NULL,size INTEGER NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(application_id) REFERENCES applications(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,title TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS announcements(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);\nCREATE TABLE IF NOT EXISTS visits(id INTEGER PRIMARY KEY AUTOINCREMENT,visitor_id TEXT NOT NULL,path TEXT NOT NULL,referrer TEXT NOT NULL DEFAULT '',user_agent TEXT NOT NULL DEFAULT '',device TEXT NOT NULL DEFAULT 'Unknown',ip_hash TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);\nCREATE INDEX IF NOT EXISTS idx_visits_created_at ON visits(created_at);\nCREATE INDEX IF NOT EXISTS idx_visits_visitor_id ON visits(visitor_id);
 `);
 const now=()=>new Date().toISOString(), hash=t=>crypto.createHash("sha256").update(t).digest("hex"), random=()=>crypto.randomBytes(32).toString("hex");
 function seed(){
@@ -49,6 +49,22 @@ seed();
 app.use(express.json({limit:"1mb"}));app.use(cookieParser());
 app.use((req,res,next)=>{res.setHeader("X-Content-Type-Options","nosniff");res.setHeader("X-Frame-Options","DENY");res.setHeader("Referrer-Policy","strict-origin-when-cross-origin");next()});
 const publicDir=path.join(__dirname,"..");
+function visitorDevice(ua){
+  ua=String(ua||"").toLowerCase();
+  if(/mobile|android|iphone|ipad|ipod/.test(ua)) return "Mobile";
+  return "Desktop";
+}
+app.use((req,res,next)=>{
+  const isPage=req.method==="GET" && !req.path.startsWith("/api/") && !req.path.startsWith("/admin") && (req.path==="/" || req.path.endsWith(".html"));
+  if(!isPage) return next();
+  let visitorId=req.cookies.visitor_id;
+  if(!visitorId){ visitorId=crypto.randomBytes(18).toString("hex"); res.cookie("visitor_id",visitorId,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",maxAge:365*864e5,path:"/"}); }
+  const ip=String(req.ip||"").replace(/^::ffff:/,"");
+  const ipHash=hash((process.env.SESSION_SECRET||"visitor-secret")+":"+ip);
+  db.prepare("INSERT INTO visits(visitor_id,path,referrer,user_agent,device,ip_hash,created_at) VALUES(?,?,?,?,?,?,?)")
+    .run(visitorId,req.path,String(req.get("referer")||"").slice(0,500),String(req.get("user-agent")||"").slice(0,500),visitorDevice(req.get("user-agent")),ipHash,now());
+  next();
+});
 app.use(express.static(publicDir,{index:"index.html"}));
 
 const auth=(req,res,next)=>{
@@ -117,6 +133,12 @@ app.get("/api/track",(req,res)=>{
  if(!a)return res.status(404).json({error:"Application not found"});res.json({application:a});
 });
 
+app.get("/api/admin/visits",auth,admin,(req,res)=>{
+ const totals=db.prepare("SELECT COUNT(*) visits,COUNT(DISTINCT visitor_id) unique_visitors FROM visits").get();
+ const today=db.prepare("SELECT COUNT(*) visits,COUNT(DISTINCT visitor_id) unique_visitors FROM visits WHERE date(created_at)=date('now')").get();
+ const recent=db.prepare("SELECT id,visitor_id,path,referrer,device,created_at FROM visits ORDER BY id DESC LIMIT 100").all();
+ res.json({totals,today,recent});
+});
 app.get("/api/admin/stats",auth,admin,(req,res)=>{
  const count=q=>db.prepare(q).get().c;res.json({users:count("SELECT COUNT(*) c FROM users WHERE role='user'"),applications:count("SELECT COUNT(*) c FROM applications"),processing:count("SELECT COUNT(*) c FROM applications WHERE status IN ('Under Review','Processing')"),completed:count("SELECT COUNT(*) c FROM applications WHERE status='Completed'")});
 });
