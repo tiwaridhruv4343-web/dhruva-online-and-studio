@@ -19,22 +19,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#footerEmail").href = `mailto:${SITE_CONFIG.contact.email}`;
   $("#year").textContent = new Date().getFullYear();
 
-  const waNumber = SITE_CONFIG.contact.whatsappNumber;
-  const waUrl = text => `https://wa.me/${waNumber}?text=${encodeURIComponent(text)}`;
-  const openWhatsApp = text => {
-    const url = waUrl(text);
-    if (/Android/i.test(navigator.userAgent)) {
-      const appUrl = `whatsapp://send?phone=${waNumber}&text=${encodeURIComponent(text)}`;
-      const started = Date.now();
-      window.location.href = appUrl;
-      setTimeout(() => { if (Date.now() - started < 1800) window.location.href = url; }, 900);
-    } else {
-      window.location.href = url;
-    }
-  };
-  const waFloat = $("#whatsappFloat");
-  waFloat.href = waUrl("Hello DHRUVA ONLINE AND STUDIO, I need assistance.");
-  waFloat.addEventListener("click", e => { e.preventDefault(); openWhatsApp("Hello DHRUVA ONLINE AND STUDIO, I need assistance."); });
+  const waBase = `https://wa.me/${SITE_CONFIG.contact.whatsappNumber}`;
+  $("#whatsappFloat").href = `${waBase}?text=${encodeURIComponent("Hello DHRUVA ONLINE AND STUDIO, I need assistance.")}`;
 
   ["facebook","instagram","youtube","telegram"].forEach(k => {
     const el = document.getElementById(k);
@@ -71,7 +57,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("#modalDescription").textContent = s.description;
     $("#modalProcess").textContent = s.process;
     $("#modalDocs").innerHTML = s.documents.map(d => `<li>${escapeHtml(d)}</li>`).join("");
-    $("#modalContact").href = waUrl(`Hello DHRUVA ONLINE AND STUDIO, I want assistance with: ${s.title}`);
+    $("#modalContact").href = `${waBase}?text=${encodeURIComponent(`Hello DHRUVA ONLINE AND STUDIO, I want assistance with: ${s.title}`)}`;
     modal.classList.add("open");
     modal.setAttribute("aria-hidden","false");
     document.body.classList.add("modal-open");
@@ -94,13 +80,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const open = nav.classList.toggle("open");
     menuToggle.setAttribute("aria-expanded", String(open));
   });
-  $(".nav a").forEach(a => a.addEventListener("click", () => {
+  $$(".nav a").forEach(a => a.addEventListener("click", () => {
     nav.classList.remove("open");
     menuToggle.setAttribute("aria-expanded","false");
-  }));
-  $(".contact-jump").forEach(a => a.addEventListener("click", e => {
-    e.preventDefault();
-    document.getElementById("contact")?.scrollIntoView({behavior:"smooth", block:"start"});
   }));
 
   $("#contactForm").addEventListener("submit", e => {
@@ -115,7 +97,7 @@ document.addEventListener("DOMContentLoaded", () => {
       `Service: ${service ? service.title : "General enquiry"}`,
       `Message: ${form.get("message")}`
     ].join("\n");
-    openWhatsApp(text);
+    window.location.href = `${waBase}?text=${encodeURIComponent(text)}`;
   });
 
   const observer = new IntersectionObserver(entries => {
