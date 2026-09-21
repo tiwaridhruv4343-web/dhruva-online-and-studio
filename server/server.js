@@ -57,7 +57,7 @@ function seed(){
 seed();
 
 app.use(express.json({limit:"1mb"}));app.use(cookieParser());
-const securityWindowMs=60*1000, securityMaxRequests=120;
+const securityWindowMs=60*1000, securityMaxRequests=120, requestBuckets=new Map();
 function requestIp(req){return String(req.ip||"").replace(/^::ffff:/,"")||"unknown"}
 function requestIpHash(req){return hash((process.env.SESSION_SECRET||"visitor-secret")+":"+requestIp(req))}
 function securityLog(req,type,details=""){db.prepare("INSERT INTO security_events(event_type,ip_hash,route,details,created_at) VALUES(?,?,?,?,?)").run(type,requestIpHash(req),req.path,String(details).slice(0,500),now())}
@@ -66,9 +66,10 @@ function blockIp(req,reason,minutes=30){const expires=new Date(Date.now()+minute
 app.use((req,res,next)=>{
   if(req.path==="/api/health"||req.path==="/health")return next();
   if(isBlocked(req))return res.status(429).json({error:"Too many suspicious requests. Try again later."});
-  const cutoff=new Date(Date.now()-securityWindowMs).toISOString();
-  const recent=db.prepare("SELECT COUNT(*) c FROM security_events WHERE ip_hash=? AND created_at>=?").get(requestIpHash(req),cutoff).c;
-  if(recent>securityMaxRequests){blockIp(req,"Rate limit exceeded",15);return res.status(429).json({error:"Too many requests. Please try again later."})}
+  const key=requestIpHash(req), current=Date.now(), bucket=requestBuckets.get(key);
+  if(!bucket||current-bucket.started>=securityWindowMs){requestBuckets.set(key,{started:current,count:1});return next()}
+  bucket.count++;
+  if(bucket.count>securityMaxRequests){securityLog(req,"RATE_LIMIT","request threshold exceeded");blockIp(req,"Rate limit exceeded",15);return res.status(429).json({error:"Too many requests. Please try again later."})}
   next();
 });
 app.use((req,res,next)=>{const start=Date.now();res.on("finish",()=>{if(req.path.startsWith("/api/")&&[401,403,404,429].includes(res.statusCode))securityLog(req,"SUSPICIOUS_RESPONSE",`${res.statusCode} ${Date.now()-start}ms`)});next()});
