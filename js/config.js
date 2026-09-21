@@ -15,8 +15,8 @@ const SITE_CONFIG = {
     phoneLink: "+91 79746 74861",
     whatsappNumber: "917974674861", // Replace with WhatsApp number, country code included
     email: "tiwaridhruv4343@gmail.com",
-    address: "Mangawan",
-    mapQuery: "https://maps.app.goo.gl/EnuCzc3KJdAZE3gq6"
+    address: "Mangawan, Madhya Pradesh, India",
+    mapQuery: "Mangawan, Madhya Pradesh, India"
   },
 
   social: {
