@@ -99,43 +99,6 @@ app.use((req,res,next)=>{
     .run(visitorId,req.path,String(req.get("referer")||"").slice(0,500),String(req.get("user-agent")||"").slice(0,500),visitorDevice(req.get("user-agent")),ipHash,now());
   next();
 });
-// Free built-in security bot: no paid service or external API required.
-const securityWindow=new Map(), loginWindow=new Map();
-function clientIp(req){return String(req.ip||req.socket.remoteAddress||"").replace(/^::ffff:/,"");}
-function securityLog(req,event,details=""){
-  const ipHash=hash((process.env.SESSION_SECRET||"security-secret")+":"+clientIp(req));
-  db.prepare("INSERT INTO security_events(ip_hash,event,path,user_agent,details,created_at) VALUES(?,?,?,?,?,?)").run(ipHash,event,req.path,String(req.get("user-agent")||"").slice(0,500),String(details).slice(0,500),now());
-}
-function blocked(req){
-  const ipHash=hash((process.env.SESSION_SECRET||"security-secret")+":"+clientIp(req));
-  const row=db.prepare("SELECT * FROM security_blocks WHERE ip_hash=?").get(ipHash);
-  if(!row)return false;
-  if(new Date(row.expires_at)<=new Date()){db.prepare("DELETE FROM security_blocks WHERE ip_hash=?").run(ipHash);return false;}
-  return true;
-}
-function addBlock(req,reason,minutes){
-  const ipHash=hash((process.env.SESSION_SECRET||"security-secret")+":"+clientIp(req));
-  db.prepare("INSERT INTO security_blocks(ip_hash,reason,expires_at,created_at) VALUES(?,?,?,?) ON CONFLICT(ip_hash) DO UPDATE SET reason=excluded.reason,expires_at=excluded.expires_at").run(ipHash,reason,new Date(Date.now()+minutes*60000).toISOString(),now());
-  securityLog(req,"temporary_block",reason);
-}
-function hitLimit(store,key,limit,windowMs){
-  const t=Date.now(), old=store.get(key)||[], fresh=old.filter(x=>t-x<windowMs);
-  fresh.push(t); store.set(key,fresh);
-  return fresh.length>limit;
-}
-app.use((req,res,next)=>{
-  if(req.path.startsWith("/api/") && blocked(req)) return res.status(429).json({error:"Temporarily blocked by security protection. Try again later."});
-  if(req.path.startsWith("/api/") && req.method!=="OPTIONS"){
-    if(hitLimit(securityWindow,clientIp(req),30,30000)){
-      securityLog(req,"api_rate_limit","Too many API requests");
-      addBlock(req,"Too many API requests",15);
-      return res.status(429).json({error:"Too many requests. Please try again later."});
-    }
-  }
-  next();
-});
-app.use(express.static(publicDir,{index:"index.html"}));
-
 const auth=(req,res,next)=>{
  const raw=req.cookies.session; if(!raw)return res.status(401).json({error:"Authentication required"});
  const row=db.prepare("SELECT u.*,s.expires_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?").get(hash(raw));
