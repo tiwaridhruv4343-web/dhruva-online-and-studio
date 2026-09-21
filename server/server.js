@@ -60,11 +60,11 @@ function isBlocked(req){const b=db.prepare("SELECT expires_at FROM security_bloc
 function blockIp(req,reason,minutes=30){const expires=new Date(Date.now()+minutes*60000).toISOString();db.prepare("INSERT INTO security_blocks(ip_hash,reason,expires_at,created_at) VALUES(?,?,?,?) ON CONFLICT(ip_hash) DO UPDATE SET reason=excluded.reason,expires_at=excluded.expires_at").run(requestIpHash(req),reason,expires,now());securityLog(req,"IP_BLOCKED",reason)}
 app.use((req,res,next)=>{
   if(req.path==="/api/health"||req.path==="/health")return next();
-  if(isBlocked(req))return res.status(429).json({error:"Too many suspicious requests. Try again later."});
+  // Monitoring-only mode: suspicious traffic is logged but never automatically blocked.
   const key=requestIpHash(req), current=Date.now(), bucket=requestBuckets.get(key);
   if(!bucket||current-bucket.started>=securityWindowMs){requestBuckets.set(key,{started:current,count:1});return next()}
   bucket.count++;
-  if(bucket.count>securityMaxRequests){securityLog(req,"RATE_LIMIT","request threshold exceeded");blockIp(req,"Rate limit exceeded",15);return res.status(429).json({error:"Too many requests. Please try again later."})}
+  if(bucket.count>securityMaxRequests){securityLog(req,"RATE_LIMIT","request threshold exceeded (monitoring only)");return next()}
   next();
 });
 app.use((req,res,next)=>{const start=Date.now();res.on("finish",()=>{if(req.path.startsWith("/api/")&&[401,403,404,429].includes(res.statusCode))securityLog(req,"SUSPICIOUS_RESPONSE",`${res.statusCode} ${Date.now()-start}ms`)});next()});
@@ -120,13 +120,13 @@ app.post("/api/auth/login",async(req,res)=>{
  const loginKey=hash(String(email||"").toLowerCase().trim()+":"+requestIp(req));
  const cutoff=new Date(Date.now()-15*60*1000).toISOString();
  const failed=db.prepare("SELECT COUNT(*) c FROM security_events WHERE event_type='LOGIN_FAILED' AND ip_hash=? AND created_at>=?").get(requestIpHash(req),cutoff).c;
- if(failed>=8){blockIp(req,"Too many failed login attempts",30);return res.status(429).json({error:"Too many failed login attempts. Try again later."})}
+ if(failed>=8){securityLog(req,"LOGIN_ABUSE","8+ failed login attempts in 15 minutes (monitoring only)");}
  const u=db.prepare("SELECT * FROM users WHERE email=?").get(String(email||"").toLowerCase().trim());
  if(!u||!(await bcrypt.compare(password||"",u.password_hash))){securityLog(req,"LOGIN_FAILED","invalid credentials");return res.status(401).json({error:"Invalid email or password"});}
  securityLog(req,"LOGIN_SUCCESS","authenticated");
  issueSession(u.id,res);res.json({ok:true,role:u.role});
 });
-app.post("/api/security/honeypot",(req,res)=>{securityLog(req,"HONEYPOT_TRIGGER","bot trap");blockIp(req,"Honeypot triggered",60);res.status(204).end()});
+app.post("/api/security/honeypot",(req,res)=>{securityLog(req,"HONEYPOT_TRIGGER","bot trap (monitoring only)");res.status(204).end()});
 app.get("/api/admin/security",auth,admin,(req,res)=>{
  const events=db.prepare("SELECT id,event_type,route,details,created_at FROM security_events ORDER BY id DESC LIMIT 100").all();
  const blocks=db.prepare("SELECT reason,expires_at,created_at FROM security_blocks WHERE expires_at>? ORDER BY expires_at DESC").all(now());
