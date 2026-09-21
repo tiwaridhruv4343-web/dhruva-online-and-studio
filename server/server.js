@@ -182,6 +182,12 @@ app.get("/api/admin/visits",auth,admin,(req,res)=>{
  const recent=db.prepare("SELECT id,visitor_id,path,referrer,device,created_at FROM visits ORDER BY id DESC LIMIT 100").all();
  res.json({totals,today,recent});
 });
+app.get("/api/admin/security",auth,admin,(req,res)=>{
+ const events=db.prepare("SELECT id,event,path,details,created_at FROM security_events ORDER BY id DESC LIMIT 100").all();
+ const blocks=db.prepare("SELECT reason,expires_at,created_at FROM security_blocks WHERE expires_at>? ORDER BY expires_at DESC").all(now());
+ const totals=db.prepare("SELECT COUNT(*) c FROM security_events").get().c;
+ res.json({totals,events,blocks});
+});
 app.get("/api/admin/stats",auth,admin,(req,res)=>{
  const count=q=>db.prepare(q).get().c;res.json({users:count("SELECT COUNT(*) c FROM users WHERE role='user'"),applications:count("SELECT COUNT(*) c FROM applications"),processing:count("SELECT COUNT(*) c FROM applications WHERE status IN ('Under Review','Processing')"),completed:count("SELECT COUNT(*) c FROM applications WHERE status='Completed'")});
 });
