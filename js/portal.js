@@ -3,7 +3,7 @@ const $=s=>document.querySelector(s);
 async function load(){
  try{
   const me=await api("/api/auth/me"); if(!me.user) return location.href="/auth.html";
-  $("#welcome").textContent=`Welcome, ${me.user.name}`; $("#portalWhatsApp").href=`https://wa.me/${SITE_CONFIG.contact.whatsappNumber}?text=${encodeURIComponent("Hello DHRUVA ONLINE AND STUDIO, I need assistance with my account/application.")}`;
+  $("#welcome").textContent=`Welcome, ${me.user.name}`; $("#portalWhatsApp").href=`https://api.whatsapp.com/send?phone=${SITE_CONFIG.contact.whatsappNumber}&text=${encodeURIComponent("Hello DHRUVA ONLINE AND STUDIO, I need assistance with my account/application.")}`;
   $("#profileBox").innerHTML=`<div class="profile-line"><span>Name</span><b>${esc(me.user.name)}</b></div><div class="profile-line"><span>Email</span><b>${esc(me.user.email)}</b></div><div class="profile-line"><span>Mobile</span><b>${esc(me.user.mobile||"—")}</b></div>`;
   const [services,apps,notes]=await Promise.all([api("/api/services"),api("/api/applications"),api("/api/notifications")]);
   $("#portalServices").innerHTML=services.services.filter(s=>s.available).map(s=>`<article class="service-card"><div class="service-icon">✦</div><h3>${esc(s.name)}</h3><p>${esc(s.description)}</p><small class="fee">${esc(s.fee_display||"Fee: As applicable")}</small><button class="btn btn-primary service-apply" data-id="${s.id}">Apply <span>→</span></button></article>`).join("");
