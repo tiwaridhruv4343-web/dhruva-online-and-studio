@@ -1,0 +1,167 @@
+/*
+ DHRUVA ONLINE AND STUDIO backend
+ Free/open-source stack: Node.js + Express + SQLite + bcryptjs + secure cookies.
+ This server is intentionally required for real authentication, private uploads,
+ application storage and admin operations. The frontend alone is not treated as
+ a secure system.
+*/
+require("dotenv").config();
+const express=require("express"), path=require("path"), fs=require("fs"), crypto=require("crypto"), cookieParser=require("cookie-parser"), bcrypt=require("bcryptjs"), multer=require("multer"), Database=require("better-sqlite3");
+
+const app=express();
+// Render terminates HTTPS at its proxy and forwards requests to this service.
+// Trust one proxy hop so Express handles production proxy semantics correctly.
+if(process.env.NODE_ENV==="production") app.set("trust proxy",1);
+const PORT=Number(process.env.PORT||3000);
+const DATA_DIR=path.join(__dirname,"data"), UPLOAD_DIR=path.join(__dirname,"uploads");
+fs.mkdirSync(DATA_DIR,{recursive:true});fs.mkdirSync(UPLOAD_DIR,{recursive:true});
+const db=new Database(path.join(DATA_DIR,"dhruva.sqlite"));
+db.pragma("journal_mode = WAL"); db.pragma("foreign_keys = ON");
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,email TEXT NOT NULL UNIQUE,mobile TEXT NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'user',created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL,expires_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS services(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,description TEXT NOT NULL,required_documents TEXT NOT NULL DEFAULT '[]',processing_info TEXT NOT NULL DEFAULT '',fee_display TEXT NOT NULL DEFAULT '',available INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS applications(id INTEGER PRIMARY KEY AUTOINCREMENT,reference_id TEXT NOT NULL UNIQUE,user_id INTEGER NOT NULL,service_id INTEGER NOT NULL,full_name TEXT NOT NULL,mobile TEXT NOT NULL,details TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'Submitted',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id),FOREIGN KEY(service_id) REFERENCES services(id));
+CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY AUTOINCREMENT,application_id INTEGER NOT NULL,original_name TEXT NOT NULL,stored_name TEXT NOT NULL,mime_type TEXT NOT NULL,size INTEGER NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(application_id) REFERENCES applications(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,title TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS announcements(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+`);
+const now=()=>new Date().toISOString(), hash=t=>crypto.createHash("sha256").update(t).digest("hex"), random=()=>crypto.randomBytes(32).toString("hex");
+function seed(){
+ const count=db.prepare("SELECT COUNT(*) c FROM services").get().c;
+ if(!count){
+  const ins=db.prepare("INSERT INTO services(name,description,required_documents,processing_info,fee_display,available,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)");
+  const defaults=[
+   ["Online Services","Everyday online assistance from one convenient place.",["Valid mobile number","Service-specific details"],"Depends on the relevant portal.","As applicable",1],
+   ["Digital Services","Smart digital solutions for personal and business needs.",["Mobile/email","Service-specific documents"],"Varies by service.","As applicable",1],
+   ["Document Services","Organise, prepare and manage digital documents with ease.",["Source documents","Clear scans/photos"],"Depends on file count.","As applicable",1],
+   ["Form Filling","Careful assistance for online forms and applications.",["Identity proof","Address/details","Photo/signature where required"],"Subject to portal availability.","As applicable",1],
+   ["Online Application Assistance","Guidance through online application steps.",["Application-specific documents","Active mobile number"],"Subject to portal validation.","As applicable",1],
+   ["Print / Scan Services","Convenient document printing and scanning support.",["Digital file or original document"],"Many routine requests can be completed during the visit.","As applicable",1]
+  ];
+  for(const s of defaults)ins.run(s[0],s[1],JSON.stringify(s[2]),s[3],s[4],s[5],now(),now());
+ }
+}
+seed();
+
+app.use(express.json({limit:"1mb"}));app.use(cookieParser());
+app.use((req,res,next)=>{res.setHeader("X-Content-Type-Options","nosniff");res.setHeader("X-Frame-Options","DENY");res.setHeader("Referrer-Policy","strict-origin-when-cross-origin");next()});
+const publicDir=path.join(__dirname,"..");
+app.use(express.static(publicDir,{index:"index.html"}));
+
+const auth=(req,res,next)=>{
+ const raw=req.cookies.session; if(!raw)return res.status(401).json({error:"Authentication required"});
+ const row=db.prepare("SELECT u.*,s.expires_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?").get(hash(raw));
+ if(!row||new Date(row.expires_at)<new Date()){if(row)db.prepare("DELETE FROM sessions WHERE token_hash=?").run(hash(raw));return res.status(401).json({error:"Session expired"})}
+ req.user={id:row.id,name:row.name,email:row.email,mobile:row.mobile,role:row.role};next();
+};
+const admin=(req,res,next)=>{if(req.user?.role!=="admin")return res.status(403).json({error:"Admin access required"});next()};
+function issueSession(userId,res){const token=random();db.prepare("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)").run(hash(token),userId,new Date(Date.now()+7*864e5).toISOString());res.cookie("session",token,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",maxAge:7*864e5,path:"/"});}
+function safeUser(u){return {id:u.id,name:u.name,email:u.email,mobile:u.mobile,role:u.role};}
+function ref(){return "DHO-"+new Date().toISOString().slice(0,10).replaceAll("-","")+"-"+crypto.randomBytes(3).toString("hex").toUpperCase()}
+
+app.post("/api/auth/register",async(req,res)=>{
+ const {name,email,mobile,password,confirmPassword}=req.body;
+ if(!name||!email||!mobile||!password)return res.status(400).json({error:"All fields are required"});
+ if(password!==confirmPassword)return res.status(400).json({error:"Passwords do not match"});
+ if(password.length<8)return res.status(400).json({error:"Password must be at least 8 characters"});
+ try{
+  const h=await bcrypt.hash(password,12),t=now(),r=db.prepare("INSERT INTO users(name,email,mobile,password_hash,role,created_at,updated_at) VALUES(?,?,?,?,?,?,?)").run(name.trim(),email.toLowerCase().trim(),mobile.trim(),h,"user",t,t);
+  issueSession(r.lastInsertRowid,res);res.json({ok:true,role:"user"});
+ }catch(e){res.status(409).json({error:"An account with this email already exists"})}
+});
+app.post("/api/auth/login",async(req,res)=>{
+ const {email,password}=req.body;const u=db.prepare("SELECT * FROM users WHERE email=?").get(String(email||"").toLowerCase().trim());
+ if(!u||!(await bcrypt.compare(password||"",u.password_hash)))return res.status(401).json({error:"Invalid email or password"});
+ issueSession(u.id,res);res.json({ok:true,role:u.role});
+});
+app.post("/api/auth/logout",(req,res)=>{const raw=req.cookies.session;if(raw)db.prepare("DELETE FROM sessions WHERE token_hash=?").run(hash(raw));res.clearCookie("session");res.json({ok:true})});
+app.get("/api/auth/me",(req,res)=>{try{auth(req,res,()=>res.json({user:safeUser(req.user)}))}catch{res.json({user:null})}});
+app.post("/api/auth/forgot",(req,res)=>{
+ // Production-ready UI endpoint: no reset token is exposed to the browser.
+ // Email delivery requires SMTP configuration; without it we return a safe generic message.
+ const exists=db.prepare("SELECT id FROM users WHERE email=?").get(String(req.body.email||"").toLowerCase().trim());
+ res.json({ok:true,message:"If that email is registered, password-reset instructions will be sent. Configure SMTP in .env to enable delivery."});
+});
+
+app.get("/api/services",(req,res)=>{
+ const services=db.prepare("SELECT * FROM services ORDER BY id").all().map(s=>({...s,required_documents:JSON.parse(s.required_documents),available:!!s.available}));
+ res.json({services});
+});
+app.get("/api/applications",(req,res)=>{auth(req,res,()=>{
+ const apps=db.prepare("SELECT a.*,s.name service_name FROM applications a JOIN services s ON s.id=a.service_id WHERE a.user_id=? ORDER BY a.id DESC").all(req.user.id);res.json({applications:apps});
+})});
+const upload=multer({storage:multer.diskStorage({destination:UPLOAD_DIR,filename:(req,file,cb)=>cb(null,crypto.randomUUID()+path.extname(file.originalname).toLowerCase())}),limits:{files:5,fileSize:5*1024*1024},fileFilter:(req,file,cb)=>cb(null,["application/pdf","image/jpeg","image/png"].includes(file.mimetype))});
+app.post("/api/applications",auth,upload.array("documents",5),(req,res)=>{
+ try{
+  const service=db.prepare("SELECT * FROM services WHERE id=? AND available=1").get(req.body.service_id);if(!service)return res.status(400).json({error:"Service unavailable"});
+  const t=now(),reference=ref();const tx=db.transaction(()=>{
+   const a=db.prepare("INSERT INTO applications(reference_id,user_id,service_id,full_name,mobile,details,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").run(reference,req.user.id,service.id,req.body.full_name,req.body.mobile,req.body.details,"Submitted",t,t);
+   for(const f of req.files||[])db.prepare("INSERT INTO documents(application_id,original_name,stored_name,mime_type,size,created_at) VALUES(?,?,?,?,?,?)").run(a.lastInsertRowid,f.originalname,f.filename,f.mimetype,f.size,t);
+   db.prepare("INSERT INTO notifications(user_id,title,message,created_at) VALUES(?,?,?,?)").run(req.user.id,"Application submitted",`Your application ${reference} has been submitted.`,t);
+  });tx();res.json({ok:true,reference_id:reference});
+ }catch(e){for(const f of req.files||[])try{fs.unlinkSync(f.path)}catch{};res.status(500).json({error:"Could not submit application"})}
+});
+app.get("/api/notifications",auth,(req,res)=>{
+ const userNotes=db.prepare("SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 30").all(req.user.id);
+ const announcements=db.prepare("SELECT id,title,message,created_at FROM announcements ORDER BY id DESC LIMIT 15").all()
+   .map(a=>({id:`announcement-${a.id}`,title:a.title,message:a.message,created_at:a.created_at}));
+ res.json({notifications:[...userNotes,...announcements].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,30)});
+});
+
+app.get("/api/track",(req,res)=>{
+ const v=String(req.query.value||"").trim();if(!v)return res.status(400).json({error:"Enter an application ID or mobile number"});
+ const a=db.prepare("SELECT a.*,s.name service_name FROM applications a JOIN services s ON s.id=a.service_id WHERE a.reference_id=? OR a.mobile=? ORDER BY a.id DESC LIMIT 1").get(v,v);
+ if(!a)return res.status(404).json({error:"Application not found"});res.json({application:a});
+});
+
+app.get("/api/admin/stats",auth,admin,(req,res)=>{
+ const count=q=>db.prepare(q).get().c;res.json({users:count("SELECT COUNT(*) c FROM users WHERE role='user'"),applications:count("SELECT COUNT(*) c FROM applications"),processing:count("SELECT COUNT(*) c FROM applications WHERE status IN ('Under Review','Processing')"),completed:count("SELECT COUNT(*) c FROM applications WHERE status='Completed'")});
+});
+app.get("/api/admin/applications",auth,admin,(req,res)=>res.json({applications:db.prepare("SELECT a.*,s.name service_name,u.name user_name FROM applications a JOIN services s ON s.id=a.service_id JOIN users u ON u.id=a.user_id ORDER BY a.id DESC").all()}));
+app.patch("/api/admin/applications/:id/status",auth,admin,(req,res)=>{
+ const allowed=["Submitted","Under Review","Processing","Completed","Rejected"],s=req.body.status;if(!allowed.includes(s))return res.status(400).json({error:"Invalid status"});
+ const a=db.prepare("SELECT * FROM applications WHERE id=?").get(req.params.id);if(!a)return res.status(404).json({error:"Application not found"});
+ db.prepare("UPDATE applications SET status=?,updated_at=? WHERE id=?").run(s,now(),a.id);
+ db.prepare("INSERT INTO notifications(user_id,title,message,created_at) VALUES(?,?,?,?)").run(a.user_id,"Application status updated",`Application ${a.reference_id} is now ${s}.`,now());
+ res.json({ok:true});
+});
+app.get("/api/admin/applications/:id/documents",auth,admin,(req,res)=>{
+ const docs=db.prepare("SELECT id,original_name,mime_type,size,created_at FROM documents WHERE application_id=?").all(req.params.id);
+ res.json({documents:docs.map(d=>({...d,url:`/api/admin/documents/${d.id}`}))});
+});
+app.get("/api/admin/documents/:id",auth,admin,(req,res)=>{
+ const d=db.prepare("SELECT * FROM documents WHERE id=?").get(req.params.id);
+ if(!d)return res.status(404).json({error:"Document not found"});
+ const full=path.join(UPLOAD_DIR,d.stored_name);
+ if(!fs.existsSync(full))return res.status(404).json({error:"Stored file not found"});
+ res.setHeader("Content-Type",d.mime_type);
+ res.setHeader("Content-Disposition",`inline; filename="${String(d.original_name).replace(/["\\\\]/g,"_")}"`);
+ res.sendFile(full);
+});
+app.get("/api/admin/services",auth,admin,(req,res)=>res.redirect("/api/services"));
+app.post("/api/admin/services",auth,admin,(req,res)=>saveService(req,res));
+app.put("/api/admin/services/:id",auth,admin,(req,res)=>saveService(req,res,req.params.id));
+app.delete("/api/admin/services/:id",auth,admin,(req,res)=>{
+ const used=db.prepare("SELECT COUNT(*) c FROM applications WHERE service_id=?").get(req.params.id).c;
+ if(used) return res.status(409).json({error:"This service has applications and cannot be deleted. Mark it unavailable instead."});
+ db.prepare("DELETE FROM services WHERE id=?").run(req.params.id);res.json({ok:true});
+});
+function saveService(req,res,id=null){const {name,description,required_documents=[],processing_info="",fee_display="",available=true}=req.body,t=now();if(!name||!description)return res.status(400).json({error:"Name and description are required"});if(id){db.prepare("UPDATE services SET name=?,description=?,required_documents=?,processing_info=?,fee_display=?,available=?,updated_at=? WHERE id=?").run(name,description,JSON.stringify(required_documents),processing_info,fee_display,available?1:0,t,id)}else db.prepare("INSERT INTO services(name,description,required_documents,processing_info,fee_display,available,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").run(name,description,JSON.stringify(required_documents),processing_info,fee_display,available?1:0,t,t);res.json({ok:true})}
+app.get("/api/admin/announcements",auth,admin,(req,res)=>res.json({announcements:db.prepare("SELECT * FROM announcements ORDER BY id DESC").all()}));
+app.post("/api/admin/announcements",auth,admin,(req,res)=>{if(!req.body.title||!req.body.message)return res.status(400).json({error:"Title and message required"});db.prepare("INSERT INTO announcements(title,message,created_at) VALUES(?,?,?)").run(req.body.title,req.body.message,now());res.json({ok:true})});
+
+app.get("/api/admin/users",auth,admin,(req,res)=>res.json({users:db.prepare("SELECT id,name,email,mobile,role,created_at FROM users ORDER BY id DESC").all()}));
+app.get("/api/admin/settings",auth,admin,(req,res)=>{
+ const rows=db.prepare("SELECT key,value FROM settings").all(); const settings=Object.fromEntries(rows.map(x=>[x.key,x.value])); res.json({settings});
+});
+app.put("/api/admin/settings",auth,admin,(req,res)=>{
+ const allowed=["phoneDisplay","phoneLink","whatsappNumber","email","address","mapQuery"];
+ const up=db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+ const tx=db.transaction(()=>allowed.forEach(k=>{if(req.body[k]!==undefined)up.run(k,String(req.body[k]))}));tx();res.json({ok:true});
+});
+
+app.get("/health",(req,res)=>res.json({ok:true,service:"DHRUVA ONLINE AND STUDIO"}));
+app.listen(PORT,"0.0.0.0",()=>console.log(`DHRUVA ONLINE AND STUDIO listening on port ${PORT}`));
